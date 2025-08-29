@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Personal Finance Tracker</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: Arial, sans-serif;
+      background: #f4f6f9;
+      color: #333;
+      padding: 20px;
+      transition: background 0.3s, color 0.3s;
+    }
+    body.dark { background: #222; color: #eee; }
+    h1 { text-align: center; margin-bottom: 20px; }
+    .container { max-width: 900px; margin: auto; }
+    .card {
+      background: #fff; padding: 15px; margin-bottom: 20px;
+      border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+    }
+    body.dark .card { background: #333; }
+    .summary { display: flex; justify-content: space-between; flex-wrap: wrap; }
+    .summary div { flex: 1; text-align: center; margin: 10px; }
+    .income { color: green; }
+    .expense { color: red; }
+    .transactions ul { list-style: none; max-height: 250px; overflow-y: auto; }
+    .transactions li {
+      display: flex; justify-content: space-between;
+      padding: 8px; border-bottom: 1px solid #ddd;
+    }
+    body.dark .transactions li { border-color: #555; }
+    .transactions li.income { color: green; }
+    .transactions li.expense { color: red; }
+    .add-transaction form, .budget form {
+      display: flex; flex-wrap: wrap; gap: 10px;
+    }
+    input, select, button {
+      padding: 10px; border-radius: 6px; border: 1px solid #ccc;
+    }
+    button {
+      background: #007bff; color: white; border: none; cursor: pointer;
+    }
+    button:hover { background: #0056b3; }
+    .progress {
+      background: #eee; border-radius: 8px; overflow: hidden; height: 20px;
+    }
+    .progress-bar {
+      height: 100%; width: 0%; background: orange; text-align: center;
+      color: white; font-size: 12px;
+    }
+    canvas { margin-top: 20px; }
+    .top-actions { display: flex; justify-content: space-between; margin-bottom: 15px; flex-wrap: wrap; gap: 10px; }
+    .dark-toggle { cursor: pointer; padding: 8px 12px; border-radius: 6px; background: #444; color: #fff; }
+    body:not(.dark) .dark-toggle { background: #eee; color: #333; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>💰 Personal Finance Tracker</h1>
+
+    <div class="top-actions">
+      <input type="text" id="search" placeholder="Search transactions..."/>
+      <div>
+        <button onclick="exportCSV()">⬇️ Export CSV</button>
+        <input type="file" id="importFile" accept=".csv" />
+        <button class="dark-toggle" onclick="toggleDark()">🌙 Toggle Theme</button>
+      </div>
+    </div>
+
+    <div class="card balance">
+      <h2>Balance: ₹<span id="balance">0</span></h2>
+    </div>
+
+    <div class="card summary">
+      <div>
+        <h3>Income</h3>
+        <p class="income">₹<span id="income">0</span></p>
+      </div>
+      <div>
+        <h3>Expense</h3>
+        <p class="expense">₹<span id="expense">0</span></p>
+      </div>
+    </div>
+
+    <div class="card budget">
+      <h3>Monthly Budget</h3>
+      <form onsubmit="setBudget(event)">
+        <input type="number" id="budgetInput" placeholder="Enter monthly budget" required/>
+        <button type="submit">Set</button>
+      </form>
+      <div class="progress"><div id="budgetBar" class="progress-bar">0%</div></div>
+    </div>
+
+    <div class="card add-transaction">
+      <h3>Add Transaction</h3>
+      <form id="transaction-form">
+        <input type="text" id="desc" placeholder="Description" required />
+        <input type="number" id="amount" placeholder="Amount" required />
+        <select id="type">
+          <option value="income">Income</option>
+          <option value="expense">Expense</option>
+        </select>
+        <select id="category">
+          <option>Salary</option>
+          <option>Food</option>
+          <option>Travel</option>
+          <option>Shopping</option>
+          <option>Rent</option>
+          <option>Other</option>
+        </select>
+        <button type="submit">Add</button>
+      </form>
+    </div>
+
+    <div class="card transactions">
+      <h3>Transactions</h3>
+      <ul id="transaction-list"></ul>
+    </div>
+
+    <canvas id="chart" height="200"></canvas>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    const balanceEl = document.getElementById('balance');
+    const incomeEl = document.getElementById('income');
+    const expenseEl = document.getElementById('expense');
+    const listEl = document.getElementById('transaction-list');
+    const form = document.getElementById('transaction-form');
+    const descEl = document.getElementById('desc');
+    const amountEl = document.getElementById('amount');
+    const typeEl = document.getElementById('type');
+    const categoryEl = document.getElementById('category');
+    const budgetInput = document.getElementById('budgetInput');
+    const budgetBar = document.getElementById('budgetBar');
+    const searchEl = document.getElementById('search');
+    const importFile = document.getElementById('importFile');
+
+    let transactions = JSON.parse(localStorage.getItem('transactions')) || [];
+    let budget = localStorage.getItem('budget') || 0;
+    let chart;
+
+    function updateUI() {
+      listEl.innerHTML = '';
+      let income = 0, expense = 0;
+
+      let filtered = transactions.filter(t => 
+        t.desc.toLowerCase().includes(searchEl.value.toLowerCase()) || 
+        t.category.toLowerCase().includes(searchEl.value.toLowerCase())
+      );
+
+      filtered.forEach((t, index) => {
+        const li = document.createElement('li');
+        li.classList.add(t.type);
+        li.innerHTML = \`\${t.desc} [\${t.category}] <span>\${t.type === 'income' ? '+' : '-'}₹\${t.amount}</span>
+                        <button onclick=\"deleteTransaction(\${index})\">❌</button>\`;
+        listEl.appendChild(li);
+
+        if (t.type === 'income') income += t.amount;
+        else expense += t.amount;
+      });
+
+      const balance = income - expense;
+      balanceEl.textContent = balance;
+      incomeEl.textContent = income;
+      expenseEl.textContent = expense;
+
+      localStorage.setItem('transactions', JSON.stringify(transactions));
+      updateBudget(expense);
+      updateChart(income, expense);
+    }
+
+    function deleteTransaction(index) {
+      transactions.splice(index, 1);
+      updateUI();
+    }
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const transaction = {
+        desc: descEl.value,
+        amount: +amountEl.value,
+        type: typeEl.value,
+        category: categoryEl.value
+      };
+      transactions.push(transaction);
+      descEl.value = '';
+      amountEl.value = '';
+      updateUI(); // ✅ shows immediately
+    });
+
+    // Budget
+    function setBudget(e) {
+      e.preventDefault();
+      budget = +budgetInput.value;
+      localStorage.setItem('budget', budget);
+      updateUI();
+    }
+
+    function updateBudget(expense) {
+      if (!budget || budget <= 0) { budgetBar.style.width = '0%'; budgetBar.textContent = '0%'; return; }
+      let percent = Math.min(100, Math.round((expense / budget) * 100));
+      budgetBar.style.width = percent + '%';
+      budgetBar.textContent = percent + '%';
+      budgetBar.style.background = percent < 70 ? 'green' : percent < 100 ? 'orange' : 'red';
+    }
+
+    // Chart
+    function updateChart(income, expense) {
+      const ctx = document.getElementById('chart').getContext('2d');
+      if (chart) chart.destroy();
+      chart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+          labels: ['Income', 'Expense'],
+          datasets: [{
+            data: [income, expense],
+            backgroundColor: ['green', 'red']
+          }]
+        }
+      });
+    }
+
+    // Search
+    searchEl.addEventListener('input', updateUI);
+
+    // Export CSV
+    function exportCSV() {
+      let csv = 'Description,Amount,Type,Category\\n';
+      transactions.forEach(t => {
+        csv += \`\${t.desc},\${t.amount},\${t.type},\${t.category}\\n\`;
+      });
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'transactions.csv';
+      a.click();
+    }
+
+    // Import CSV
+    importFile.addEventListener('change', function() {
+      const file = this.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const rows = e.target.result.split('\\n').slice(1);
+        rows.forEach(r => {
+          const [desc, amount, type, category] = r.split(',');
+          if (desc && amount) {
+            transactions.push({ desc, amount:+amount, type, category: category||'Other' });
+          }
+        });
+        updateUI();
+      };
+      reader.readAsText(file);
+    });
+
+    // Dark Mode
+    function toggleDark() {
+      document.body.classList.toggle('dark');
+    }
+
+    // Init
+    if (budget) budgetInput.value = budget;
+    updateUI();
+  </script>
+</body>
+</html>
